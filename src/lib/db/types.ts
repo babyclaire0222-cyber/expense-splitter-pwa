@@ -13,6 +13,12 @@ export type SyncStatus = 'synced' | 'pending' | 'conflict';
  */
 export type SplitType = 'equal' | 'percentage' | 'custom';
 
+/** Matches Postgres members.role check constraint. */
+export type MemberRole = 'creator' | 'member';
+
+/** Matches Postgres members.status check constraint — drives approval gating. */
+export type MemberStatus = 'pending' | 'approved' | 'rejected';
+
 /**
  * A Group is the top-level container for shared expenses.
  * currency is an ISO 4217 code (e.g. 'USD', 'EUR') — all amounts
@@ -23,7 +29,7 @@ export interface Group {
 	name: string;
 	currency: string; // ISO 4217, e.g. 'USD'
 	createdAt: string; // ISO 8601 timestamp
-	createdBy: string; // memberId or supabase auth user id
+	createdBy: string; // Supabase auth user id of the creator
 	joinCode: string; // short code for join links, e.g. 'AB3F9K'
 	syncStatus: SyncStatus;
 	updatedAt: string; // ISO 8601 timestamp, bumped on every local write
@@ -34,12 +40,20 @@ export interface Group {
  * A Member is a person within a group. Not every member has a Supabase
  * Auth account — someone can be added to a group by display name only
  * (e.g. "Alex", cash-only friend) before ever signing up.
+ *
+ * status/role/approvedBy* fields mirror the approval-gated join flow
+ * built in Step 3 — a new joiner starts 'pending' until the group
+ * creator approves them.
  */
 export interface Member {
 	id: string; // client-generated UUID
 	groupId: string;
 	displayName: string;
 	authUserId: string | null; // Supabase auth.users.id, null if not a registered user
+	role: MemberRole;
+	status: MemberStatus;
+	approvedByAuthUserId: string | null; // auth user id of whoever approved this member
+	approvedAt: string | null; // ISO 8601, null if not yet approved
 	joinedAt: string; // ISO 8601 timestamp
 	syncStatus: SyncStatus;
 	updatedAt: string;
@@ -104,18 +118,21 @@ export interface AuditLogEntry {
 
 /**
  * SyncQueue tracks outbound operations that need to be pushed to Supabase.
- * This is the "outbox" in the outbox pattern — built now, consumed in Step 5.
+ * This is the "outbox" in the outbox pattern.
  */
 export type SyncOperation = 'insert' | 'update' | 'delete';
 
+/** Named alias so sync engine code can reference table names as a type, not just inline literals. */
+export type SyncTableName = 'groups' | 'members' | 'expenses' | 'splits' | 'auditLog';
+
 export interface SyncQueueEntry {
 	id: string; // client-generated UUID
-	tableName: 'groups' | 'members' | 'expenses' | 'splits' | 'auditLog';
+	tableName: SyncTableName;
 	recordId: string; // id of the record in its source table
 	operation: SyncOperation;
 	payload: string; // JSON-stringified record snapshot to push
 	createdAt: string; // ISO 8601, when queued
-	attempts: number; // retry count, for backoff logic in Step 5
+	attempts: number; // retry count, for backoff logic
 	lastAttemptAt: string | null;
 	lastError: string | null;
 }

@@ -24,7 +24,7 @@ export class ExpenseSplitterDB extends Dexie {
 		this.version(1).stores({
 			groups: 'id, joinCode, syncStatus, deletedAt, updatedAt',
 
-			members: 'id, groupId, authUserId, syncStatus, deletedAt, [groupId+deletedAt]',
+			members: 'id, groupid, authUserId, status, syncStatus, deletedAt, [groupId+deletedAt]',
 
 			expenses:
 				'id, groupId, paidByMemberId, syncStatus, deletedAt, expenseDate, [groupId+deletedAt]',
