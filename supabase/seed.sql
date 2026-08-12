@@ -11,7 +11,7 @@
 -- =========================================================================
 do $$
 declare
-	v_auth_user_id uuid := 'cee4348c-f032-4c38-abf0-cba063c89d69'; -- <-- REPLACE THIS
+	v_auth_user_id uuid := '195d7d4e-f2e4-473c-9ee8-06630214013c'; -- <-- REPLACE THIS
 	v_group_id uuid := 'a0000000-0000-4000-8000-000000000001';
 	v_member_creator uuid := 'b0000000-0000-4000-8000-000000000001';
 	v_member_alex uuid := 'b0000000-0000-4000-8000-000000000002';

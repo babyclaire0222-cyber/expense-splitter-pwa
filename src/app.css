@@ -1,0 +1,31 @@
+/* src/app.css */
+@import 'tailwindcss';
+@import '@fontsource-variable/fraunces';
+@import '@fontsource/instrument-sans';
+@import '@fontsource/ibm-plex-mono';
+
+@theme {
+	--color-paper: #ecf0e6;
+	--color-card: #f8faf4;
+	--color-ink: #1c2b22;
+	--color-credit: #2e6b4f;
+	--color-debit: #b23a2e;
+	--color-brass: #c08829;
+
+	--font-display: 'Fraunces Variable', serif;
+	--font-sans: 'Instrument Sans', sans-serif;
+	--font-mono: 'IBM Plex Mono', monospace;
+}
+
+body {
+	background-color: var(--color-paper);
+	color: var(--color-ink);
+	font-family: var(--font-sans);
+}
+
+/* Signature element: the "stub tear" divider */
+.stub-tear {
+	border: none;
+	border-top: 2px dashed color-mix(in srgb, var(--color-ink) 25%, transparent);
+	margin: 1rem 0;
+}
