@@ -5,11 +5,11 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { supabase } from '$lib/supabase/client';
+	import TopBar from '$lib/components/TopBar.svelte';
 
 	let { children } = $props();
 
 	onMount(() => {
-		// Skip the guard on the login page itself, to avoid a redirect loop.
 		if (page.url.pathname === '/login') return;
 
 		supabase.auth.getSession().then(({ data: { session } }) => {
@@ -18,7 +18,6 @@
 			}
 		});
 
-		// Also react to sign-out happening while the app is open.
 		const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
 			if (!session && page.url.pathname !== '/login') {
 				goto('/login');
@@ -27,10 +26,16 @@
 
 		return () => authListener.subscription.unsubscribe();
 	});
+
+	let showChrome = $derived(page.url.pathname !== '/login');
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+{#if showChrome}
+	<TopBar />
+{/if}
 
 {@render children()}
