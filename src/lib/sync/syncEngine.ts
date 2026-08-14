@@ -23,14 +23,7 @@ import type { SyncQueueEntry } from '$lib/db/types';
 
 let isSyncing = false;
 
-/**
- * Pushes a single queue entry to its matching Supabase table. Written as
- * an explicit switch (rather than a dynamic string lookup) because the
- * generated Supabase types only accept literal table name strings in
- * `.from(...)` — a widened `string` variable doesn't satisfy that, even
- * if its runtime value is always correct.
- */
-async function pushOneEntry(entry: SyncQueueEntry): Promise<void> {
+async function pushSingleTableEntry(entry: SyncQueueEntry): Promise<void> {
 	const localRecord = JSON.parse(entry.payload);
 
 	switch (entry.tableName) {
@@ -52,15 +45,8 @@ async function pushOneEntry(entry: SyncQueueEntry): Promise<void> {
 			await db.expenses.update(entry.recordId, { syncStatus: 'synced' });
 			break;
 		}
-		case 'splits': {
-			const { error } = await supabase.from('splits').upsert(splitToRemote(localRecord));
-			if (error) throw error;
-			await db.splits.update(entry.recordId, { syncStatus: 'synced' });
-			break;
-		}
 		case 'auditLog': {
 			const { error } = await supabase.from('audit_log').insert(auditLogToRemote(localRecord));
-			// Postgres unique_violation (23505) on retry-of-already-synced entry is fine to ignore.
 			if (error && error.code !== '23505') throw error;
 			await db.auditLog.update(entry.recordId, { syncStatus: 'synced' });
 			break;
@@ -69,37 +55,68 @@ async function pushOneEntry(entry: SyncQueueEntry): Promise<void> {
 }
 
 /**
- * PUSH: drains the local outbox to Supabase, oldest entry first.
+ * Splits carry a deferred constraint trigger (check_split_sum) that
+ * validates at the end of the SQL transaction, not per-row. Each
+ * individual Supabase REST call is its own transaction, so pushing
+ * splits one at a time causes the trigger to reject every row except
+ * possibly the last (the running sum never matches the expense total
+ * until all rows for that expense are present). We push ALL eligible
+ * split entries in a single upsert() call instead, so they land in one
+ * transaction and the trigger only evaluates once everything is in.
  */
+async function pushSplitEntriesBatched(entries: SyncQueueEntry[]): Promise<void> {
+	if (entries.length === 0) return;
+
+	const remoteRows = entries.map((e) => splitToRemote(JSON.parse(e.payload)));
+	const { error } = await supabase.from('splits').upsert(remoteRows);
+
+	if (error) {
+		for (const entry of entries) {
+			await markQueueEntryFailed(entry.id, error.message);
+		}
+		return;
+	}
+
+	for (const entry of entries) {
+		await removeQueueEntry(entry.id);
+		await db.splits.update(entry.recordId, { syncStatus: 'synced' });
+	}
+}
+
 export async function pushPendingChanges(): Promise<void> {
 	if (!navigator.onLine) return;
 
-	const entries = await getQueuedEntriesInOrder();
+	const allEntries = await getQueuedEntriesInOrder();
+	const eligible = allEntries.filter(
+		(e) => e.attempts < MAX_AUTO_ATTEMPTS && !isWithinBackoffWindow(e)
+	);
 
-	for (const entry of entries) {
-		if (entry.attempts >= MAX_AUTO_ATTEMPTS) continue; // needs manual retry
-		if (isWithinBackoffWindow(entry)) continue;
+	const splitEntries = eligible.filter((e) => e.tableName === 'splits');
+	const otherEntries = eligible.filter((e) => e.tableName !== 'splits');
 
+	// Push non-split entries individually, in queue order (groups/members/
+	// expenses have no cross-row constraint, so one-at-a-time is fine and
+	// keeps per-entry retry/backoff granular).
+	for (const entry of otherEntries) {
 		try {
-			await pushOneEntry(entry);
+			await pushSingleTableEntry(entry);
 			await removeQueueEntry(entry.id);
 		} catch (err) {
 			await markQueueEntryFailed(entry.id, err instanceof Error ? err.message : String(err));
 		}
 	}
+
+	// Push all eligible splits together in one transaction.
+	await pushSplitEntriesBatched(splitEntries);
 }
 
-/**
- * PULL: fetches everything RLS allows the current user to see and upserts
- * it into Dexie. Safe to call repeatedly — bulkPut overwrites by primary key.
- */
 export async function pullRemoteChanges(): Promise<void> {
 	if (!navigator.onLine) return;
 
 	const {
 		data: { user }
 	} = await supabase.auth.getUser();
-	if (!user) return; // not logged in yet, nothing to pull
+	if (!user) return;
 
 	const [groupsRes, membersRes, expensesRes, splitsRes] = await Promise.all([
 		supabase.from('groups').select('*'),
@@ -122,7 +139,6 @@ export async function pullRemoteChanges(): Promise<void> {
 	}
 }
 
-/** Runs pull then push, guarded against overlapping concurrent runs. */
 export async function runFullSync(): Promise<void> {
 	if (isSyncing) return;
 	isSyncing = true;
@@ -134,9 +150,8 @@ export async function runFullSync(): Promise<void> {
 	}
 }
 
-/** Call once on app startup. Wires 'online' event + runs an initial sync. */
 export function startSyncEngine(): void {
-	if (typeof window === 'undefined') return; // SSR guard
+	if (typeof window === 'undefined') return;
 
 	window.addEventListener('online', () => {
 		void runFullSync();
