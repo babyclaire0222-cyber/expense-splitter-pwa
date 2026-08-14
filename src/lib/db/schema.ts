@@ -21,10 +21,10 @@ export class ExpenseSplitterDB extends Dexie {
 	constructor() {
 		super('ExpenseSplitterDB');
 
-		this.version(1).stores({
+		this.version(2).stores({
 			groups: 'id, joinCode, syncStatus, deletedAt, updatedAt',
 
-			members: 'id, groupid, authUserId, status, syncStatus, deletedAt, [groupId+deletedAt]',
+			members: 'id, groupId, authUserId, status, syncStatus, deletedAt, [groupId+deletedAt]',
 
 			expenses:
 				'id, groupId, paidByMemberId, syncStatus, deletedAt, expenseDate, [groupId+deletedAt]',
