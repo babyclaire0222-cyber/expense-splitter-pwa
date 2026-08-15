@@ -29,8 +29,12 @@
 <div class="mx-auto max-w-lg px-4 py-6">
 	<div class="mb-6 flex items-center justify-between">
 		<h1 class="font-display text-2xl text-ink">Your groups</h1>
-		<a href="/groups/new" class="rounded bg-brass px-4 py-2 text-sm font-medium text-white">New group</a>
-	</div>
+		<div class="flex gap-2">
+	<a href="/groups/join" class="rounded border border-ink/20 px-4 py-2 text-sm font-medium text-ink">Join group</a>
+	<a href="/groups/new" class="rounded bg-brass px-4 py-2 text-sm font-medium text-white">New group</a>
+        </div>
+        </div>
+
 
 	{#if groups.value.length === 0}
 		<div class="rounded-lg border border-dashed border-ink/20 bg-card py-12 text-center">
