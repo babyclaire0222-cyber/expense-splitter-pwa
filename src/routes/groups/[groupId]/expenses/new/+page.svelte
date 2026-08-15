@@ -4,7 +4,8 @@
 	import { db } from '$lib/db/schema';
 	import { supabase } from '$lib/supabase/client';
 	import { createExpenseLocal } from '$lib/db/writeHelpers';
-	import { computeEqualSplit } from '$lib/ledger/splitEngine';
+	import { computeEqualSplit, computePercentageSplit, computeCustomSplit, SplitValidationError } from '$lib/ledger/splitEngine';
+	import type { SplitType } from '$lib/db/types';
 
 	let groupId = $derived(page.params.groupId ?? '');
 
@@ -19,7 +20,10 @@
 	let description = $state('');
 	let amountDollars = $state('');
 	let paidByMemberId = $state('');
+	let splitType = $state<SplitType>('equal');
 	let includedMemberIds = $state<Set<string>>(new Set());
+	let percentageByMemberId = $state<Record<string, string>>({});
+	let customDollarsByMemberId = $state<Record<string, string>>({});
 	let errorMessage = $state<string | null>(null);
 	let isSubmitting = $state(false);
 
@@ -32,6 +36,11 @@
 
 			members = approved.map((m) => ({ id: m.id, displayName: m.displayName }));
 			includedMemberIds = new Set(approved.map((m) => m.id));
+
+			const evenPercentage = (100 / approved.length).toFixed(2);
+			const pctInit: Record<string, string> = {};
+			for (const m of approved) pctInit[m.id] = evenPercentage;
+			percentageByMemberId = pctInit;
 
 			const {
 				data: { user }
@@ -61,11 +70,29 @@
 		return crypto.randomUUID();
 	}
 
+	function amountCentsValue(): number {
+		return Math.round(parseFloat(amountDollars || '0') * 100);
+	}
+
+	let percentageTotal = $derived(
+		Array.from(includedMemberIds).reduce(
+			(acc, id) => acc + (parseFloat(percentageByMemberId[id] ?? '0') || 0),
+			0
+		)
+	);
+
+	let customTotalCents = $derived(
+		Array.from(includedMemberIds).reduce(
+			(acc, id) => acc + Math.round((parseFloat(customDollarsByMemberId[id] ?? '0') || 0) * 100),
+			0
+		)
+	);
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		errorMessage = null;
 
-		const amountCents = Math.round(parseFloat(amountDollars) * 100);
+		const amountCents = amountCentsValue();
 
 		if (!description.trim()) {
 			errorMessage = 'Enter a description.';
@@ -87,10 +114,30 @@
 		isSubmitting = true;
 
 		try {
-			const computedShares = computeEqualSplit({
-				amountCents,
-				memberIds: Array.from(includedMemberIds)
-			});
+			let computedShares;
+
+			if (splitType === 'equal') {
+				computedShares = computeEqualSplit({
+					amountCents,
+					memberIds: Array.from(includedMemberIds)
+				});
+			} else if (splitType === 'percentage') {
+				computedShares = computePercentageSplit({
+					amountCents,
+					shares: Array.from(includedMemberIds).map((id) => ({
+						memberId: id,
+						percentage: parseFloat(percentageByMemberId[id] ?? '0') || 0
+					}))
+				});
+			} else {
+				computedShares = computeCustomSplit({
+					amountCents,
+					shares: Array.from(includedMemberIds).map((id) => ({
+						memberId: id,
+						shareCents: Math.round((parseFloat(customDollarsByMemberId[id] ?? '0') || 0) * 100)
+					}))
+				});
+			}
 
 			const timestamp = new Date().toISOString();
 			const expenseId = generateId();
@@ -103,7 +150,7 @@
 					amountCents,
 					currency: 'USD',
 					paidByMemberId,
-					splitType: 'equal',
+					splitType,
 					expenseDate: timestamp,
 					createdByMemberId: currentMemberId ?? paidByMemberId,
 					reversalOfExpenseId: null
@@ -120,7 +167,11 @@
 
 			await goto(`/groups/${groupId}/expenses`);
 		} catch (err) {
-			errorMessage = err instanceof Error ? err.message : 'Something went wrong.';
+			if (err instanceof SplitValidationError) {
+				errorMessage = err.message;
+			} else {
+				errorMessage = err instanceof Error ? err.message : 'Something went wrong.';
+			}
 			isSubmitting = false;
 		}
 	}
@@ -150,16 +201,77 @@
 		</label>
 
 		<div>
-			<span class="mb-2 block text-sm text-ink/70">Split equally between</span>
-			<div class="space-y-2">
-				{#each members as member (member.id)}
-					<label class="flex items-center gap-2 rounded border border-ink/10 bg-card px-3 py-2">
-						<input type="checkbox" checked={includedMemberIds.has(member.id)} onchange={() => toggleMember(member.id)} />
-						<span class="text-ink">{member.id === currentMemberId ? 'You' : member.displayName}</span>
-					</label>
-				{/each}
+			<span class="mb-2 block text-sm text-ink/70">Split type</span>
+			<div class="flex gap-2">
+				<button type="button" onclick={() => (splitType = 'equal')} class="flex-1 rounded border px-3 py-2 text-sm {splitType === 'equal' ? 'border-brass bg-brass text-white' : 'border-ink/20 text-ink'}">Equal</button>
+				<button type="button" onclick={() => (splitType = 'percentage')} class="flex-1 rounded border px-3 py-2 text-sm {splitType === 'percentage' ? 'border-brass bg-brass text-white' : 'border-ink/20 text-ink'}">Percentage</button>
+				<button type="button" onclick={() => (splitType = 'custom')} class="flex-1 rounded border px-3 py-2 text-sm {splitType === 'custom' ? 'border-brass bg-brass text-white' : 'border-ink/20 text-ink'}">Custom</button>
 			</div>
 		</div>
+
+		{#if splitType === 'equal'}
+			<div>
+				<span class="mb-2 block text-sm text-ink/70">Split equally between</span>
+				<div class="space-y-2">
+					{#each members as member (member.id)}
+						<label class="flex items-center gap-2 rounded border border-ink/10 bg-card px-3 py-2">
+							<input type="checkbox" checked={includedMemberIds.has(member.id)} onchange={() => toggleMember(member.id)} />
+							<span class="text-ink">{member.id === currentMemberId ? 'You' : member.displayName}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+		{:else if splitType === 'percentage'}
+			<div>
+				<span class="mb-2 block text-sm text-ink/70">Percentage per member</span>
+				<div class="space-y-2">
+					{#each members as member (member.id)}
+						<div class="flex items-center gap-2 rounded border border-ink/10 bg-card px-3 py-2">
+							<input type="checkbox" checked={includedMemberIds.has(member.id)} onchange={() => toggleMember(member.id)} />
+							<span class="flex-1 text-ink">{member.id === currentMemberId ? 'You' : member.displayName}</span>
+							{#if includedMemberIds.has(member.id)}
+								<input
+									type="number"
+									step="0.01"
+									class="w-20 rounded border border-ink/20 bg-white px-2 py-1 text-right text-ink"
+									value={percentageByMemberId[member.id] ?? ''}
+									oninput={(e) => (percentageByMemberId = { ...percentageByMemberId, [member.id]: e.currentTarget.value })}
+								/>
+								<span class="text-ink/50">%</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				<p class="mt-2 text-right font-mono text-xs {Math.abs(percentageTotal - 100) < 0.5 ? 'text-credit' : 'text-debit'}">
+					Total: {percentageTotal.toFixed(2)}%
+				</p>
+			</div>
+		{:else}
+			<div>
+				<span class="mb-2 block text-sm text-ink/70">Amount per member</span>
+				<div class="space-y-2">
+					{#each members as member (member.id)}
+						<div class="flex items-center gap-2 rounded border border-ink/10 bg-card px-3 py-2">
+							<input type="checkbox" checked={includedMemberIds.has(member.id)} onchange={() => toggleMember(member.id)} />
+							<span class="flex-1 text-ink">{member.id === currentMemberId ? 'You' : member.displayName}</span>
+							{#if includedMemberIds.has(member.id)}
+								<span class="text-ink/50">$</span>
+								<input
+									type="number"
+									step="0.01"
+									class="w-24 rounded border border-ink/20 bg-white px-2 py-1 text-right text-ink"
+									value={customDollarsByMemberId[member.id] ?? ''}
+									oninput={(e) => (customDollarsByMemberId = { ...customDollarsByMemberId, [member.id]: e.currentTarget.value })}
+								/>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				<p class="mt-2 text-right font-mono text-xs {customTotalCents === amountCentsValue() ? 'text-credit' : 'text-debit'}">
+					Total: ${(customTotalCents / 100).toFixed(2)} of ${(amountCentsValue() / 100).toFixed(2)}
+				</p>
+			</div>
+		{/if}
 
 		{#if errorMessage}
 			<p class="text-sm text-debit">{errorMessage}</p>
