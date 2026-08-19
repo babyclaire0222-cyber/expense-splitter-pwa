@@ -22,6 +22,7 @@ function makeExpense(overrides: Partial<Expense> & { id: string }): Expense {
 		updatedAt: '2026-01-01T00:00:00.000Z',
 		deletedAt: null,
 		reversalOfExpenseId: null,
+		version: 1,
 		...overrides
 	};
 }
@@ -33,6 +34,7 @@ function makeSplit(overrides: Partial<Split> & { id: string; expenseId: string }
 		sharePercentage: null,
 		syncStatus: 'synced',
 		updatedAt: '2026-01-01T00:00:00.000Z',
+		version: 1,
 		...overrides
 	};
 }

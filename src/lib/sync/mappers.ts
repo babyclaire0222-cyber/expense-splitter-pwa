@@ -2,7 +2,7 @@
 // Converts between Dexie's camelCase local records and Supabase's
 // snake_case remote rows. Kept centralized here so every place that
 // pushes or pulls uses the exact same field mapping.
-import type { Group, Member, Expense, Split, AuditLogEntry } from '$lib/db/types';
+import type { Group, Member, Expense, Split, AuditLogEntry, Settlement } from '$lib/db/types';
 
 export function groupToRemote(g: Group) {
 	return {
@@ -14,6 +14,10 @@ export function groupToRemote(g: Group) {
 		created_at: g.createdAt,
 		updated_at: g.updatedAt,
 		deleted_at: g.deletedAt
+		// version intentionally omitted — server-managed via trigger, see
+		// migration 0004_optimistic_concurrency.sql. Including a
+		// client-supplied value here would be harmless (the trigger
+		// overwrites it regardless) but is left out for clarity.
 	};
 }
 
@@ -27,7 +31,8 @@ export function groupFromRemote(row: any): Group {
 		createdAt: row.created_at,
 		syncStatus: 'synced',
 		updatedAt: row.updated_at,
-		deletedAt: row.deleted_at
+		deletedAt: row.deleted_at,
+		version: row.version
 	};
 }
 
@@ -60,7 +65,8 @@ export function memberFromRemote(row: any): Member {
 		joinedAt: row.joined_at,
 		syncStatus: 'synced',
 		updatedAt: row.updated_at,
-		deletedAt: row.deleted_at
+		deletedAt: row.deleted_at,
+		version: row.version
 	};
 }
 
@@ -97,7 +103,8 @@ export function expenseFromRemote(row: any): Expense {
 		syncStatus: 'synced',
 		updatedAt: row.updated_at,
 		deletedAt: row.deleted_at,
-		reversalOfExpenseId: row.reversal_of_expense_id
+		reversalOfExpenseId: row.reversal_of_expense_id,
+		version: row.version
 	};
 }
 
@@ -120,7 +127,8 @@ export function splitFromRemote(row: any): Split {
 		shareCents: row.share_cents,
 		sharePercentage: row.share_percentage,
 		syncStatus: 'synced',
-		updatedAt: row.updated_at
+		updatedAt: row.updated_at,
+		version: row.version
 	};
 }
 
@@ -146,5 +154,37 @@ export function auditLogFromRemote(row: any): AuditLogEntry {
 		performedAt: row.performed_at,
 		snapshot: JSON.stringify(row.snapshot), // jsonb object -> string
 		syncStatus: 'synced'
+	};
+}
+
+export function settlementToRemote(s: Settlement) {
+	return {
+		id: s.id,
+		group_id: s.groupId,
+		from_member_id: s.fromMemberId,
+		to_member_id: s.toMemberId,
+		amount_cents: s.amountCents,
+		settled_at: s.settledAt,
+		recorded_by_member_id: s.recordedByMemberId,
+		created_at: s.createdAt,
+		updated_at: s.updatedAt,
+		deleted_at: s.deletedAt
+	};
+}
+
+export function settlementFromRemote(row: any): Settlement {
+	return {
+		id: row.id,
+		groupId: row.group_id,
+		fromMemberId: row.from_member_id,
+		toMemberId: row.to_member_id,
+		amountCents: row.amount_cents,
+		settledAt: row.settled_at,
+		recordedByMemberId: row.recorded_by_member_id,
+		createdAt: row.created_at,
+		syncStatus: 'synced',
+		updatedAt: row.updated_at,
+		deletedAt: row.deleted_at,
+		version: row.version
 	};
 }

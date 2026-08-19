@@ -5,6 +5,7 @@
 	import { computeGroupBalances, type MemberBalance } from '$lib/ledger/balances';
 	import { supabase } from '$lib/supabase/client';
 	import { pullRemoteChanges } from '$lib/sync/syncEngine';
+	import { dismissSyncNotification } from '$lib/db/writeHelpers';
 
 	let groupId = $derived(page.params.groupId ?? '');
 
@@ -13,15 +14,24 @@
 		displayName: string;
 	}
 
+	interface NotificationRow {
+		id: string;
+		summary: string;
+		resolvedByName: string;
+		createdAt: string;
+	}
+
 	interface BalancesViewModel {
 		groupName: string | null;
 		balances: (MemberBalance & { displayName: string })[];
 		currentAuthUserId: string | null;
 		isCreator: boolean;
 		pendingMembers: PendingMember[];
+		notifications: NotificationRow[];
 	}
 
 	let actionInProgressId = $state<string | null>(null);
+	let dismissingId = $state<string | null>(null);
 
 	const viewModel = useLiveQuery<BalancesViewModel>(async () => {
 		const {
@@ -40,8 +50,12 @@
 			splitsByExpenseId.set(split.expenseId, list);
 		}
 
+		const allSettlements = await db.settlements.where('groupId').equals(groupId).toArray();
+
 		const rawBalances =
-			activeExpenses.length > 0 ? computeGroupBalances(activeExpenses, splitsByExpenseId) : [];
+			activeExpenses.length > 0 || allSettlements.length > 0
+				? computeGroupBalances(activeExpenses, splitsByExpenseId, allSettlements)
+				: [];
 
 		const members = await db.members.where('groupId').equals(groupId).toArray();
 		const memberNameById = new Map(members.map((m) => [m.id, m.displayName]));
@@ -54,6 +68,17 @@
 			.filter((m) => m.status === 'pending' && m.deletedAt === null)
 			.map((m) => ({ id: m.id, displayName: m.displayName }));
 
+		const allNotifications = await db.syncNotifications.where('groupId').equals(groupId).toArray();
+		const notifications: NotificationRow[] = allNotifications
+			.filter((n) => n.dismissedAt === null)
+			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+			.map((n) => ({
+				id: n.id,
+				summary: n.summary,
+				resolvedByName: memberNameById.get(n.resolvedByMemberId) ?? 'Someone',
+				createdAt: n.createdAt
+			}));
+
 		return {
 			groupName: group?.name ?? null,
 			balances: rawBalances.map((b) => ({
@@ -62,13 +87,31 @@
 			})),
 			currentAuthUserId: user?.id ?? null,
 			isCreator,
-			pendingMembers
+			pendingMembers,
+			notifications
 		};
-	}, { groupName: null, balances: [], currentAuthUserId: null, isCreator: false, pendingMembers: [] });
+	}, {
+		groupName: null,
+		balances: [],
+		currentAuthUserId: null,
+		isCreator: false,
+		pendingMembers: [],
+		notifications: []
+	});
 
 	function formatCents(cents: number): string {
 		const dollars = Math.abs(cents) / 100;
 		return `$${dollars.toFixed(2)}`;
+	}
+
+	function formatRelativeTime(iso: string): string {
+		const diffMs = Date.now() - new Date(iso).getTime();
+		const minutes = Math.round(diffMs / 60000);
+		if (minutes < 1) return 'just now';
+		if (minutes < 60) return `${minutes} min ago`;
+		const hours = Math.round(minutes / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 
 	async function handleApprove(memberId: string) {
@@ -94,11 +137,46 @@
 		await pullRemoteChanges();
 		actionInProgressId = null;
 	}
+
+	async function handleDismissNotification(notificationId: string) {
+		dismissingId = notificationId;
+		try {
+			await dismissSyncNotification(notificationId);
+		} finally {
+			dismissingId = null;
+		}
+	}
 </script>
 
 <div class="mx-auto max-w-lg px-4 py-6">
 	<h1 class="mb-1 font-display text-2xl text-ink">{viewModel.value.groupName ?? 'Loading...'}</h1>
 	<p class="mb-6 font-mono text-xs text-ink/50">Balances</p>
+
+	{#if viewModel.value.notifications.length > 0}
+		<div class="mb-6 space-y-2">
+			{#each viewModel.value.notifications as notification (notification.id)}
+				<div class="flex items-start justify-between gap-3 rounded-lg border border-brass/40 bg-card px-4 py-3">
+					<div>
+						<p class="text-sm text-ink">
+							<span class="font-medium">{notification.resolvedByName}</span>
+							<span class="text-ink/60">resolved a sync conflict —</span>
+							{notification.summary}
+						</p>
+						<p class="mt-1 font-mono text-[10px] text-ink/40">
+							{formatRelativeTime(notification.createdAt)} · not an ordinary refresh, someone's edit was overridden
+						</p>
+					</div>
+					<button
+						onclick={() => handleDismissNotification(notification.id)}
+						disabled={dismissingId === notification.id}
+						class="shrink-0 text-xs text-ink/50 hover:text-ink disabled:opacity-50"
+					>
+						Dismiss
+					</button>
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if viewModel.value.isCreator && viewModel.value.pendingMembers.length > 0}
 		<div class="mb-6 rounded-lg border border-brass/40 bg-card px-4 py-3">

@@ -213,6 +213,7 @@ export function computedSharesToSplits(
 		shareCents: cs.shareCents,
 		sharePercentage: cs.sharePercentage,
 		syncStatus: 'pending' as const,
-		updatedAt: nowIso
+		updatedAt: nowIso,
+		version: 1
 	}));
 }

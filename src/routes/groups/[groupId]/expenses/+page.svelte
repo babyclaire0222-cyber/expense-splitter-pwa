@@ -58,17 +58,22 @@
 	{:else}
 		<ul class="space-y-2">
 			{#each expenses.value as expense (expense.id)}
-				<li class="rounded-lg border border-ink/10 bg-card px-4 py-3">
-					<div class="flex items-center justify-between">
-						<span class="text-ink">{expense.description}</span>
-						<span class="font-display text-ink">{formatCents(expense.amountCents)}</span>
-					</div>
-					<div class="mt-1 flex items-center justify-between font-mono text-xs text-ink/50">
-						<span>{expense.payerName} paid - {formatDate(expense.expenseDate)}</span>
-						{#if expense.syncStatus === 'pending'}
-							<span class="text-brass">pending sync</span>
-						{/if}
-					</div>
+				<li>
+					<a
+						href={`/groups/${groupId}/expenses/${expense.id}/edit`}
+						class="block rounded-lg border border-ink/10 bg-card px-4 py-3 hover:border-brass/40"
+					>
+						<div class="flex items-center justify-between">
+							<span class="text-ink">{expense.description}</span>
+							<span class="font-display text-ink">{formatCents(expense.amountCents)}</span>
+						</div>
+						<div class="mt-1 flex items-center justify-between font-mono text-xs text-ink/50">
+							<span>{expense.payerName} paid - {formatDate(expense.expenseDate)}</span>
+							{#if expense.syncStatus === 'pending'}
+								<span class="text-brass">pending sync</span>
+							{/if}
+						</div>
+					</a>
 				</li>
 			{/each}
 		</ul>

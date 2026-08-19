@@ -34,6 +34,7 @@ export interface Group {
 	syncStatus: SyncStatus;
 	updatedAt: string; // ISO 8601 timestamp, bumped on every local write
 	deletedAt: string | null; // soft delete, null = active
+	version: number; // server-managed, bumped on every remote update — see migration 0004
 }
 
 /**
@@ -58,6 +59,7 @@ export interface Member {
 	syncStatus: SyncStatus;
 	updatedAt: string;
 	deletedAt: string | null;
+	version: number; // server-managed, bumped on every remote update — see migration 0004
 }
 
 /**
@@ -79,6 +81,7 @@ export interface Expense {
 	updatedAt: string;
 	deletedAt: string | null; // soft delete; deletion creates a reversal, see auditLog
 	reversalOfExpenseId: string | null; // if this expense is a compensating reversal, points to the original
+	version: number; // server-managed, bumped on every remote update — see migration 0004
 }
 
 /**
@@ -94,6 +97,7 @@ export interface Split {
 	sharePercentage: number | null; // only populated if splitType === 'percentage', e.g. 33.33
 	syncStatus: SyncStatus;
 	updatedAt: string;
+	version: number; // server-managed, bumped on every remote update — see migration 0004
 }
 
 /**
@@ -117,13 +121,98 @@ export interface AuditLogEntry {
 }
 
 /**
+ * A Settlement records that a real payment happened between two members
+ * OUTSIDE of a shared expense — e.g. Alice hands Bob $50 cash to square
+ * up what she owed him. Unlike Split, this isn't a share of a cost; it
+ * directly offsets the net balance computed from expenses.
+ *
+ * Settlements are treated as immutable historical facts once created —
+ * there's no "edit amount" flow, only soft-delete to correct a mistaken
+ * entry (e.g. recorded against the wrong pair of members).
+ */
+export interface Settlement {
+	id: string; // client-generated UUID
+	groupId: string;
+	fromMemberId: string; // who paid
+	toMemberId: string; // who received
+	amountCents: number; // integer cents, always positive
+	settledAt: string; // ISO 8601, when the payment actually happened
+	recordedByMemberId: string; // who entered this record (may differ from either party)
+	createdAt: string;
+	syncStatus: SyncStatus;
+	updatedAt: string;
+	deletedAt: string | null; // soft delete, for correcting a mistaken entry
+	version: number; // server-managed, bumped on every remote update — see migration 0004
+}
+
+/**
+ * Records an offline-edit collision: two devices changed the same row
+ * (by id) while both held a stale view of it. Detected via optimistic
+ * concurrency — see syncEngine.ts's conditional push (UPDATE ... WHERE
+ * version = <base>). When the WHERE clause matches 0 rows, the remote
+ * version has moved on since this device last saw it, so we stop and
+ * record a Conflict instead of blindly overwriting.
+ *
+ * tableName is one of the four tables that support in-place edits and
+ * therefore genuine version collisions: groups, members, expenses,
+ * settlements. Splits don't get their own Conflict rows — an edited
+ * expense's splits are always changed together with the expense (see
+ * updateExpenseLocal), so a conflict on the parent expense also holds
+ * back that expense's queued split changes until it's resolved (see
+ * pushPendingChanges). This is a deliberate scope simplification: a
+ * "keep mine" resolution re-pushes the local splits via the existing
+ * batched upsert without its own version check, so it's possible (if
+ * rare) for a resolved expense conflict's splits to still overwrite a
+ * concurrent split-only edit from someone else. True per-row optimistic
+ * locking for splits would need a Postgres RPC to stay compatible with
+ * the deferred check_split_sum trigger, which batches all of an
+ * expense's splits into one transaction — judged not worth the added
+ * complexity for this app's scale.
+ */
+export interface Conflict {
+	id: string;
+	tableName: SyncTableName;
+	recordId: string;
+	groupId: string; // which group this conflict belongs to, for scoping the UI per-group
+	localSnapshot: string; // JSON string — this device's local record at conflict time
+	remoteSnapshot: string; // JSON string — what was actually on the server at conflict time
+	detectedAt: string; // ISO 8601
+	resolvedAt: string | null; // null = still needs the user to pick a side
+	resolution: 'kept_mine' | 'kept_theirs' | null;
+}
+
+/**
+ * A local, per-device record of a "keep mine" conflict resolution that
+ * happened somewhere else in the group — pulled down from Postgres's
+ * `sync_overrides` table (see migration 0005) and given a passive,
+ * dismissible presence in the UI. This is what lets a device distinguish
+ * "my data just changed because someone resolved a conflict" from an
+ * ordinary background refresh.
+ *
+ * Deliberately NOT synced back up — dismissal is local-only, so each
+ * device/tab tracks its own "have I seen this" state independently. The
+ * underlying sync_overrides row it was created from is never deleted;
+ * only this local acknowledgment is device-specific.
+ */
+export interface SyncNotification {
+	id: string; // matches the sync_overrides row it was created from
+	groupId: string;
+	tableName: string;
+	recordId: string;
+	resolvedByMemberId: string;
+	summary: string;
+	createdAt: string;
+	dismissedAt: string | null;
+}
+
+/**
  * SyncQueue tracks outbound operations that need to be pushed to Supabase.
  * This is the "outbox" in the outbox pattern.
  */
 export type SyncOperation = 'insert' | 'update' | 'delete';
 
 /** Named alias so sync engine code can reference table names as a type, not just inline literals. */
-export type SyncTableName = 'groups' | 'members' | 'expenses' | 'splits' | 'auditLog';
+export type SyncTableName = 'groups' | 'members' | 'expenses' | 'splits' | 'auditLog' | 'settlements';
 
 export interface SyncQueueEntry {
 	id: string; // client-generated UUID

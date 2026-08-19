@@ -13,14 +13,21 @@
 		errorMessage = null;
 		isSubmitting = true;
 
-		const { error } = await supabase.auth.signInWithPassword({ email, password });
+		const {data, error } = await supabase.auth.signInWithPassword({ email, password });
 
 		isSubmitting = false;
+
+		console.log('Login data:', data)
+		console.log('Login error:', error)
 
 		if (error) {
 			errorMessage = error.message;
 			return;
 		}
+
+		console.log('session:', data.session)
+		console.log('user:', data.user )
+
 
 		await goto('/');
 	}
@@ -64,5 +71,9 @@
 		>
 			{isSubmitting ? 'Signing in…' : 'Sign in'}
 		</button>
+
+		<p class="mt-4 text-center text-sm text-ink/70">
+			New here? <a href="/signup" class="text-brass underline">Create an account</a>
+		</p>
 	</form>
 </div>
