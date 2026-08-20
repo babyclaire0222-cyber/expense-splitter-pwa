@@ -96,6 +96,9 @@ In `npm run dev`, SvelteKit's native service-worker feature still compiles and s
 ### 10. TypeScript's Supabase client needs literal table names, not `string`
 A helper function that picks a table name at runtime via a typed return of `string` breaks every `.from()` call's overload resolution, even though each branch of the ternary returns a valid literal — the explicit `: string` annotation widens it. Either let TypeScript infer the literal union return type, or (for genuinely runtime-determined table access across several different tables, like the generic conflict-resolution code in `syncEngine.ts`) cast at one narrow, well-documented boundary rather than fighting the type system at every call site.
 
+### 11. `injectManifest` fails on remote Linux CI builds specifically — never on local Windows builds
+Beyond gotchas #6–#9 (which cover getting `injectManifest` working *at all*), there's a separate, harder issue: it fails deterministically on cold Linux CI machines with the same `ENOENT: ... service-worker.js` error as gotcha #6, while succeeding 100% reliably locally. Confirmed to reproduce identically across two independent platforms' Linux build infrastructure (Vercel and Netlify), and confirmed *not* to be a timing race (two consecutive attempts on the same machine fail identically). The root cause looks like a hook-scoping issue in how `@vite-pwa/sveltekit`'s `closeBundle` hook interacts with Vite 8's newer multi-environment build API — likely upstream, not fixable from this project. See the Deployment section below for the actual workaround (build locally, deploy only the static output — never let CI run the build for this project).
+
 ## Project Setup
 
 ```bash
@@ -224,7 +227,38 @@ npm run test    # Vitest — split engine, balances, debt simplifier
 npm run check   # svelte-check — TypeScript + Svelte diagnostics
 ```
 
+## Deployment
+
+**Deployed via Netlify, not Vercel — here's why**, since it wasn't the obvious first choice and cost real time to work out:
+
+`@vite-pwa/sveltekit`'s `injectManifest` strategy has a genuine, reproducible bug under Vite 8's newer "environments" API: on a cold Linux CI build machine, the plugin's manifest-injection step (`closeBundle` hook) fires immediately after the SSR environment's build finishes, *before* the separate client-side build pass that actually compiles `src/service-worker.ts` has run — so it looks for a file that doesn't exist yet and the build fails with `ENOENT: ... service-worker.js`.
+
+This isn't a config mistake — it was confirmed to reproduce **identically on two independent platforms' Linux build infrastructure** (Vercel and Netlify, different build images, different Node patch versions, same exact error and stack trace), while succeeding 100% reliably every time on a local Windows machine. It also isn't timing-flaky — two consecutive attempts on the same machine fail identically, ruling out a race condition. The practical conclusion: **any remote CI build of this project will currently hit this bug**, regardless of hosting platform, until `@vite-pwa/sveltekit` fixes its hook scoping under Vite 8's environments API upstream.
+
+Vercel was tried first and hit three *separate* real issues before this became clear: their CLI's local build step (`vercel build`) has a long-standing, unresolved Windows bug (`Error: spawn cmd.exe ENOENT`, unrelated to PATH/`ComSpec`, both confirmed correctly configured); their framework auto-detection for a `adapter-static` SvelteKit project silently overrides `vercel.json`'s `outputDirectory` unless every override field is both toggled *and* has real typed text in it (a toggle switched on with an empty field silently does nothing); and underneath both of those, the same cross-platform `injectManifest` bug above. None of these are fixable from this project's side.
+
+### The actual working deployment process
+
+Since the local build is 100% reliable and the only broken piece is *remote* building, the fix is simple: **build locally, deploy only the already-built static output** — never let a CI machine run `npm run build` for this project.
+
+```bash
+# One-time setup
+npm install -g netlify-cli
+netlify login
+netlify link          # link to the existing site — do NOT create a new one each time
+
+# Every deploy after that
+netlify deploy --prod --dir=build
+```
+
+`netlify deploy` runs the build itself, but locally (on your machine, using your site's stored build settings) rather than on Netlify's remote Linux build servers — so it never touches the buggy code path at all. This single command is the entire deploy workflow going forward.
+
+**Do not** connect this repo to Netlify or Vercel's GitHub integration (auto-deploy on push) — that triggers a *remote* build and will hit the bug every time. Regular `git push origin master` still keeps GitHub history accurate; it just doesn't trigger a live deploy anymore.
+
+`postbuild` (in `package.json`) automatically writes both `build/vercel.json` and `build/_redirects` after every `npm run build`, so the output folder is ready for either platform's SPA-fallback routing regardless of which one ends up hosting it.
+
 ## Known Gaps / Next Steps
 
 1. **Per-row conflict detection for splits** — currently gated at the parent expense's level rather than independently version-checked; see gotcha #5 for the full reasoning and what a complete fix would require (a Postgres RPC for atomic batched conditional updates).
 2. **Multi-currency handling** — `currency` is stored per-group and per-expense but not actively validated or converted; a group's balance math implicitly assumes every expense shares the group's currency.
+3. **`@vite-pwa/sveltekit` + Vite 8 remote-build incompatibility** — see the Deployment section above. Worth periodically checking if an upstream fix lands, at which point normal git-integrated auto-deploy could be restored.
