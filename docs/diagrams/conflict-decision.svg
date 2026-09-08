@@ -1,0 +1,47 @@
+<svg width="100%" viewBox="0 0 680 320" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Tally conflict-check decision flowchart</title>
+<desc>Shows the yes/no decision Tally makes when pushing an offline edit: it checks whether the row's version still matches what this device last saw. If yes, the update applies and syncs normally. If no, someone else changed the row first, so Tally records a conflict for the user to resolve instead of silently overwriting it.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#333" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+<style>
+text { font-family: -apple-system, Segoe UI, Roboto, sans-serif; fill: #1a1a1a; }
+.th { font-size: 14px; font-weight: 600; }
+.ts { font-size: 11px; fill: #555; }
+rect { stroke: #999; fill: #fff; }
+.c-amber rect { fill: #fef6e7; stroke: #d9a441; }
+.c-green rect { fill: #e8f5e9; stroke: #4caf7d; }
+.c-red rect { fill: #fdeaea; stroke: #d97070; }
+.arr { stroke: #333; stroke-width: 1.5; }
+</style>
+
+<g>
+<rect x="250" y="20" width="180" height="44" rx="8" stroke-width="0.5"/>
+<text class="th" x="340" y="42" text-anchor="middle" dominant-baseline="central">Push a queued update</text>
+</g>
+<line x1="340" y1="64" x2="340" y2="100" class="arr" marker-end="url(#arrow)"/>
+
+<g class="c-amber">
+<rect x="230" y="100" width="220" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="340" y="114" text-anchor="middle" dominant-baseline="central">Version still matches?</text>
+<text class="ts" x="340" y="142" text-anchor="middle" dominant-baseline="central">Checked at push time</text>
+</g>
+
+<path d="M340,156 L340,180 L210,180 L210,230" class="arr" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="275" y="172" text-anchor="middle" dominant-baseline="central">Yes</text>
+
+<path d="M340,156 L340,180 L535,180 L535,230" class="arr" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="437" y="172" text-anchor="middle" dominant-baseline="central">No</text>
+
+<g class="c-green">
+<rect x="110" y="230" width="200" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="210" y="244" text-anchor="middle" dominant-baseline="central">Apply the update</text>
+<text class="ts" x="210" y="272" text-anchor="middle" dominant-baseline="central">Mark row as synced</text>
+</g>
+
+<g class="c-red">
+<rect x="430" y="230" width="210" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="535" y="244" text-anchor="middle" dominant-baseline="central">Record a conflict</text>
+<text class="ts" x="535" y="272" text-anchor="middle" dominant-baseline="central">User picks mine or theirs</text>
+</g>
+</svg>
